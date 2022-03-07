@@ -6,6 +6,11 @@ The default command is `catalina.sh run` like the Tomcat container that it is ba
 Alternatively, the command can be set to `remco` to generate a _dhis.conf_ file from environment
 variables and then run `catalina.sh run`.
 
+besudes accessing the DHIS2 server on 8080, you can also access it on port 80, 
+which uses NGINX to proxy requests to the Tomcat server. 
+This also enables the addition of custom NGINX directives to handle special
+scenarios like redirecting requests for `/api/37/tracker` to `/api/traacker`.
+
 # Features
 
 ## Entry point
