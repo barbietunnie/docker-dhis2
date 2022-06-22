@@ -1,89 +1,109 @@
-from distutils.version import StrictVersion
+import boto3
 import json
-
-# Packages not built-in
-import html2text
-import requests
-import xmltodict
+from packaging.version import Version
 
 ########
 
-# Initialize the full matrix dict
+# Configuration
+
+s3_bucket='releases.dhis2.org'
+
+########
+
+# Initialization
+
+# Initialize the full matrix dict; include "dev" manually as it is not added below
 full_matrix={
-    'dhis2_version': [],
+    'dhis2_version': ['dev'],
     'latest_major': [False],
     'latest_overall': [False],
     'include': [],
 }
 
+# Use boto3 without credentials (https://stackoverflow.com/a/34866092)
+from botocore import UNSIGNED
+from botocore.client import Config
+s3 = boto3.client('s3', region_name='eu-west-1', config=Config(signature_version=UNSIGNED))
+
 ########
 
-# Configure options for html2text
-# https://github.com/Alir3z4/html2text/blob/master/docs/usage.md
-text_maker = html2text.HTML2Text()
-text_maker.body_width = "10"
-text_maker.ignore_images = True
-text_maker.ignore_images = True
-text_maker.single_line_break = True
+# List all top-level folders in S3 bucket (https://stackoverflow.com/a/54834746)
+# DHIS2 versions will start with "2."; capture versions greater than 2.34
 
-# Get HTML from releases.dhis2.org and convert to text
-page_response = requests.get('https://s3-eu-west-1.amazonaws.com/releases.dhis2.org/index.html')
-page_raw = html2text.html2text(page_response.text)
+dhis2_majors=[]
 
-# Get the line containing DHIS2 major releases, remove text before and after, create a list from string separated by spaces
-line_raw = [i for i in page_raw.splitlines() if "DHIS 2 version" in i][0]
-line_trimmed = line_raw.removeprefix('DHIS 2 version ').removesuffix(' dev stable canary')
-dhis2_majors = line_trimmed.split(' ')
+s3_paginator = s3.get_paginator('list_objects')
 
-# Limit to 2.35 and up (compatible with Java 11)
-dhis2_majors_trimmed=[dhis2_major for dhis2_major in dhis2_majors if StrictVersion(dhis2_major) > StrictVersion('2.34')]
+pages = s3_paginator.paginate(Bucket=s3_bucket, Delimiter='/')
+
+for prefix in pages.search('CommonPrefixes'):
+
+    bucket_folder = prefix['Prefix'].strip("/")
+
+    # Dev versions go straight to the version matrix
+    if bucket_folder.startswith('2.') and Version(bucket_folder) > Version('2.34'):
+        full_matrix['dhis2_version'].append(f'{bucket_folder}-dev')
+
+    # Released versions
+    if bucket_folder.startswith('2.') and Version(bucket_folder) > Version('2.34'):
+        dhis2_majors.append(bucket_folder)
 
 # Sort list of major releases by semver
-dhis2_majors_sorted=sorted(dhis2_majors_trimmed, key=StrictVersion)
+dhis2_majors_sorted=sorted(dhis2_majors, key=lambda x: Version(x))
 
-########
+# Store all versions as dict of lists
+dhis2_versions = {}
 
 for dhis2_major in dhis2_majors_sorted:
+    # Get all objects in bucket that start with "{dhis2_major}/dhis2-stable-"
+    s3_prefix=f'{dhis2_major}/dhis2-stable-'
 
-    # Retrieve objects from the public S3 bucket filtered by an object prefix for the major release, eg: "2.35/dhis2-stable-"
-    s3_payload = {
-        'prefix': f'{dhis2_major}/dhis2-stable-'
-    }
-    s3_response = requests.get('https://s3-eu-west-1.amazonaws.com/releases.dhis2.org/', params=s3_payload)
-
-    # Convert the XML response from S3 to a dict
-    parsed = xmltodict.parse(s3_response.content)
-
-    # Within the major release, add all S3 objects where the key (file name) does not contain "-eos"/"-latest"/"-rc" to list
-    dhis2_versions = []
-    for s3_object in parsed['ListBucketResult']['Contents']:
-        # Exclude objects that contains the strings in the key name
-        if not any(value in s3_object['Key'] for value in ("-eos", "-latest", "-rc")):
-            # With the key name, remove text from the beginning and end so it's only a version name
-            dhis2_version_semver = s3_object['Key'].removeprefix(s3_payload['prefix']).removesuffix('.war').removesuffix('-EMBARGOED')
-            # Add the cleaned up version string to the list
-            dhis2_versions.append(dhis2_version_semver)
+    dhis2_major_versions = []
+    for page in s3_paginator.paginate(Bucket=s3_bucket):
+        for object in page['Contents']:
+            # Exclude objects that contain the "-eos/-latest/-rc" strings in the key name
+            if (
+                object['Key'].startswith(s3_prefix) and
+                not any(key in object['Key'] for key in ("-eos", "-hidden", "-latest", "-rc"))
+            ):
+                # With the key name, remove text from the beginning and end so it's only a version name
+                dhis2_version_semver = object['Key'].removeprefix(s3_prefix).removesuffix('.war').removesuffix('-EMBARGOED')
+                # Add the cleaned up version string to the list
+                dhis2_major_versions.append(dhis2_version_semver)
 
     # Remove duplicate entries from the list
-    dhis2_versions_distinct = list(set(dhis2_versions))
-    # Sort the list by semantic version
-    dhis2_versions_sorted = sorted(dhis2_versions_distinct, key=StrictVersion)
+    dhis2_major_versions_distinct = list(set(dhis2_major_versions))
 
-    # Loop each unique version, from oldest to newest
-    for dhis2_version in dhis2_versions_sorted:
+    # Sort the list by semantic version
+    dhis2_major_versions_sorted = sorted(dhis2_major_versions_distinct, key=lambda x: Version(x))
+
+    # Add unique list to dhis2_versions dict
+    dhis2_versions[dhis2_major] = dhis2_major_versions_sorted
+
+# Remove major versions that have no stable releases (list of releases is empty)
+# Useful for when a version of DHIS2 is in development with no releases
+# (Using list() to allow editing dict while iterating; see https://stackoverflow.com/a/11941855)
+for key, values in list(dhis2_versions.items()):
+    if not values:
+        del dhis2_versions[key]
+
+for major, versions in dhis2_versions.items():
+
+    # Loop each unique version, from oldest to newest, sort above
+    for version in versions:
 
         # If the version is the latest within the major release, build a dictionary with non-default properties
-        if dhis2_version == dhis2_versions_sorted[-1]:
+        if version == dhis2_versions[major][-1]:
 
             # Start item with the default properties but with latest_major set to True
             matrix_item = {
-                'dhis2_version': dhis2_version,
+                'dhis2_version': version,
                 'latest_major': True,
                 'latest_overall': False,
             }
 
             # Set as the latest overall version if also the latest within the latest major
-            if dhis2_major == dhis2_majors_sorted[-1]:
+            if major == sorted(list(dhis2_versions.keys()), key=lambda x: Version(x))[-1]:
                 matrix_item['latest_overall'] = True
 
             # Add the dictionary to the "include" list of non-default DHIS2 versions
@@ -91,6 +111,7 @@ for dhis2_major in dhis2_majors_sorted:
 
         else:
             # Add the DHIS2 version to the dhis2_version list with no non-default properties
-            full_matrix['dhis2_version'].append(dhis2_version)
+            full_matrix['dhis2_version'].append(version)
 
+# Send list to stdout as JSON
 print(json.dumps(full_matrix))

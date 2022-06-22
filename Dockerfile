@@ -1,5 +1,4 @@
-# syntax=docker/dockerfile:1.3-labs
-# Using syntax 1.3-labs is required for here-documents; see: https://github.com/moby/buildkit/blob/87e1fa7/frontend/dockerfile/docs/syntax.md
+# syntax=docker/dockerfile:1.4
 
 
 ################################################################################
@@ -17,7 +16,7 @@ ARG BASE_IMAGE="docker.io/library/tomcat:9-jre11-openjdk-slim-bullseye"
 
 # gosu for easy step-down from root - https://github.com/tianon/gosu/releases
 # Using rust:bullseye (same as wait-builder stage) to have gpg, unzip, and wget preinstalled.
-FROM docker.io/library/rust:1.59.0-bullseye as gosu-builder
+FROM docker.io/library/rust:1.61.0-bullseye as gosu-builder
 ARG GOSU_VERSION=1.14
 WORKDIR /work
 RUN <<EOF
@@ -37,11 +36,13 @@ EOF
 ################################################################################
 
 
-# remco for building template files - https://github.com/HeavyHorst/remco
-# Using same verion of golang as shown in the output of `remco -version` from the released 0.12.2 binary.
-# The 0.12.2 git tag has a typo in the Makefile.
-FROM docker.io/library/golang:1.15.2-buster as remco-builder
-ARG REMCO_VERSION=0.12.2
+# remco for building configuration files from templates - https://github.com/HeavyHorst/remco
+# Using same verion of golang as shown in the output of `remco -version` from the released amd64 binary.
+# REMCO_VERSION_GIT_COMMIT_HASH is used when the "Git Commit Hash" value from `remco -version` is
+# different than the commit hash from the git tag for REMCO_VERSION.
+FROM docker.io/library/golang:1.18.0-bullseye as remco-builder
+ARG REMCO_VERSION=0.12.3
+ARG REMCO_VERSION_GIT_COMMIT_HASH=7187ac836b62dd2af5eb14909ed343d7021b3a17
 WORKDIR /work
 RUN <<EOF
 #!/usr/bin/env bash
@@ -57,9 +58,10 @@ if [ "$dpkgArch" = "amd64" ]; then
 else
   git clone https://github.com/HeavyHorst/remco.git source
   cd source
-  git checkout "v${REMCO_VERSION}"
-  if [ "$REMCO_VERSION" = "0.12.2" ]; then
-    sed --expression="/^VERSION/ s/0.12.1/0.12.2/" --in-place Makefile
+  if [ -n "${REMCO_VERSION_GIT_COMMIT_HASH:-}" ]; then
+    git checkout "$REMCO_VERSION_GIT_COMMIT_HASH"
+  else
+    git checkout "v${REMCO_VERSION}"
   fi
   make
   install --verbose --mode=0755 ./bin/remco ..
@@ -74,7 +76,7 @@ EOF
 
 # wait pauses until remote hosts are available - https://github.com/ufoscout/docker-compose-wait
 # Tests are excluded due to the time taken running in arm64 emulation; see https://github.com/ufoscout/docker-compose-wait/issues/54
-FROM docker.io/library/rust:1.59.0-bullseye as wait-builder
+FROM docker.io/library/rust:1.61.0-bullseye as wait-builder
 ARG WAIT_VERSION=2.9.0
 WORKDIR /work
 RUN <<EOF
@@ -90,7 +92,21 @@ else
   git checkout "$WAIT_VERSION"
   R_TARGET="$( rustup target list --installed | grep -- '-gnu' | tail -1 | awk '{print $1}'| sed 's/gnu/musl/' )"
   rustup target add "$R_TARGET"
-  cargo build --release --target="$R_TARGET"
+  ####
+  #### BEGIN crates.io update failure workaround
+  #### https://users.rust-lang.org/t/updating-crates-io-index-manually/39360
+  #### https://stackoverflow.com/a/9237511
+  ####
+    CARGO_CRATES_INDEX="${CARGO_HOME:-$HOME/.cargo}/registry/index/github.com-1ecc6299db9ec823/.git"
+    git clone --bare https://github.com/rust-lang/crates.io-index.git "$CARGO_CRATES_INDEX"
+    git --git-dir="$CARGO_CRATES_INDEX" fetch
+    touch --reference="$CARGO_CRATES_INDEX/FETCH_HEAD" "${CARGO_CRATES_INDEX%git}last-updated"
+  ####
+  #### END crates.io update failure workaround
+  ####
+  cargo fetch --target="$R_TARGET"
+  #cargo test --target="$R_TARGET"
+  cargo build --target="$R_TARGET" --release
   strip ./target/"$R_TARGET"/release/wait
   install --verbose --mode=0755 ./target/"$R_TARGET"/release/wait ..
   cd ..
@@ -186,8 +202,8 @@ EOF
 COPY --chmod=755 --chown=root:root docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 
-# Same value is copied from the FROM image. If not specified, the CMD in this image would be "null"
-CMD ["catalina.sh", "run"]
+# Remco will create configuration files and start Tomcat
+CMD ["remco"]
 
 # Extract the dhis.war file alongside this Dockerfile, and mitigate Log4Shell on old versions
 RUN --mount=type=bind,source=dhis.war,target=dhis.war <<EOF

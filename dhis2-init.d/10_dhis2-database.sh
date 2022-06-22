@@ -22,7 +22,6 @@ ITEMS=(
   rm
   tail
   tee
-  /usr/local/bin/wait
 )
 for ITEM in "${ITEMS[@]}"; do
   if ! command -V "$ITEM" &>/dev/null ; then
@@ -35,123 +34,38 @@ done
 ################################################################################
 
 
-STATUS_FILE="/dhis2-init.progress/${SELF%.sh}_status.txt"
+if [[ -d /dhis2-init.progress/ ]]; then
 
-# Ensure status file parent directory exists
-if [[ ! -d "$( dirname "$STATUS_FILE" )" ]]; then
-  mkdir -p "$( dirname "$STATUS_FILE" )"
-fi
+  STATUS_FILE="/dhis2-init.progress/${SELF%.sh}_status.txt"
 
-if [[ "${DHIS2_INIT_FORCE:-0}" == "1" ]]; then
-  echo "[DEBUG] $SELF: DHIS2_INIT_FORCE=1; delete \"$STATUS_FILE\"..." >&2
-  rm -v -f "$STATUS_FILE"
-fi
+  # Ensure status file parent directory exists
+  if [[ ! -d "$( dirname "$STATUS_FILE" )" ]]; then
+    mkdir -p "$( dirname "$STATUS_FILE" )"
+  fi
 
-# Exit if this script has successfully completed previously and DHIS2_INIT_FORCE is not equal to "1"
-if [[ "${DHIS2_INIT_FORCE:-0}" != "1" ]] && { tail -1 "$STATUS_FILE" | grep -q 'COMPLETED$' ; } 2>/dev/null ; then
-  echo "[INFO] $SELF: script was previously completed successfully, skipping..."
-  exit 0
-fi
+  if [[ "${DHIS2_INIT_FORCE:-0}" == "1" ]]; then
+    echo "[DEBUG] $SELF: DHIS2_INIT_FORCE=1; delete \"$STATUS_FILE\"..." >&2
+    rm -v -f "$STATUS_FILE"
+  fi
 
+  # Exit if this script has successfully completed previously and DHIS2_INIT_FORCE is not equal to "1"
+  if [[ "${DHIS2_INIT_FORCE:-0}" != "1" ]] && { tail -1 "$STATUS_FILE" | grep -q 'COMPLETED$' ; } 2>/dev/null ; then
+    echo "[INFO] $SELF: script was previously completed successfully, skipping..."
+    exit 0
+  fi
 
-################################################################################
-
-
-# Deprecated logic
-
-# Set value of the deprecated DATABASE_HOST variable to DHIS2_DATABASE_HOST
-if [ -z "${DHIS2_DATABASE_HOST:-}" ] && [ -n "${DATABASE_HOST:-}" ]; then
-  export DHIS2_DATABASE_HOST="$DATABASE_HOST"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_HOST to DHIS2_DATABASE_HOST" >&2
-fi
-
-# Set value of the deprecated DATABASE_PORT variable to DHIS2_DATABASE_PORT
-if [ -z "${DHIS2_DATABASE_PORT:-}" ] && [ -n "${DATABASE_PORT:-}" ]; then
-  export DHIS2_DATABASE_PORT="$DATABASE_PORT"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_PORT to DHIS2_DATABASE_PORT" >&2
-fi
-
-# Set value of the deprecated DATABASE_DBNAME variable to DHIS2_DATABASE_NAME
-if [ -z "${DHIS2_DATABASE_NAME:-}" ] && [ -n "${DATABASE_DBNAME:-}" ]; then
-  export DHIS2_DATABASE_NAME="$DATABASE_DBNAME"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_DBNAME to DHIS2_DATABASE_NAME" >&2
-fi
-
-# Set value of the deprecated DATABASE_USERNAME variable to DHIS2_DATABASE_USERNAME
-if [ -z "${DHIS2_DATABASE_USERNAME:-}" ] && [ -n "${DATABASE_USERNAME:-}" ]; then
-  export DHIS2_DATABASE_USERNAME="$DATABASE_USERNAME"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_USERNAME to DHIS2_DATABASE_USERNAME" >&2
-fi
-
-# Set value of the deprecated DATABASE_PASSWORD variable to DHIS2_DATABASE_PASSWORD
-if [ -z "${DHIS2_DATABASE_PASSWORD:-}" ] && [ -n "${DATABASE_PASSWORD:-}" ]; then
-  export DHIS2_DATABASE_PASSWORD="$DATABASE_PASSWORD"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_PASSWORD to DHIS2_DATABASE_PASSWORD" >&2
-fi
-
-# Set value of the deprecated DATABASE_PASSWORD_FILE variable to DHIS2_DATABASE_PASSWORD_FILE
-if [ -z "${DHIS2_DATABASE_PASSWORD_FILE:-}" ] && [ -n "${DATABASE_PASSWORD_FILE:-}" ]; then
-  export DHIS2_DATABASE_PASSWORD_FILE="$DATABASE_PASSWORD_FILE"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_PASSWORD_FILE to DHIS2_DATABASE_PASSWORD_FILE" >&2
-fi
-
-########
-
-# If DHIS2_DATABASE_PASSWORD is empty or null, set it to the contents of DHIS2_DATABASE_PASSWORD_FILE
-if [[ -z "${DHIS2_DATABASE_PASSWORD:-}" ]] && [[ -r "${DHIS2_DATABASE_PASSWORD_FILE:-}" ]]; then
-  export DHIS2_DATABASE_PASSWORD="$(<"${DHIS2_DATABASE_PASSWORD_FILE}")"
-fi
-
-# If PGPASSWORD is empty or null, set it to the contents of PGPASSWORD_FILE
-if [[ -z "${PGPASSWORD:-}" ]] && [[ -r "${PGPASSWORD_FILE:-}" ]]; then
-  export PGPASSWORD="$(<"${PGPASSWORD_FILE}")"
-fi
-
-# If PGHOST is empty or null, set it to DHIS2_DATABASE_HOST if provided
-if [[ -z "${PGHOST:-}" ]] && [[ -n "${DHIS2_DATABASE_HOST:-}" ]]; then
-  export PGHOST="${DHIS2_DATABASE_HOST:-}"
-fi
-
-# Set default values if not provided in the environment
-if [[ -z "${DHIS2_DATABASE_USERNAME:-}" ]]; then
-  export DHIS2_DATABASE_USERNAME='dhis'
-fi
-if [[ -z "${DHIS2_DATABASE_NAME:-}" ]]; then
-  export DHIS2_DATABASE_NAME='dhis2'
-fi
-if [[ -z "${PGHOST:-}" ]]; then
-  export PGHOST='localhost'
-fi
-if [[ -z "${PGPORT:-}" ]]; then
-  export PGPORT='5432'
-fi
-if [[ -z "${PGUSER:-}" ]]; then
-  export PGUSER='postgres'
-fi
-
-# If WAIT_HOSTS is empty or null, set to PGHOST:PGPORT
-if [[ -z "${WAIT_HOSTS:-}" ]]; then
-  export WAIT_HOSTS="${PGHOST}:${PGPORT}"
 fi
 
 
 ################################################################################
 
 
-# Wait for hosts specified in the environment variable WAIT_HOSTS (noop if not set).
-# If it times out before the targets are available, it will exit with a non-0 code,
-# and this script will quit because of the bash option "set -e" above.
-# https://github.com/ufoscout/docker-compose-wait
-/usr/local/bin/wait 2> >( sed -r -e 's/^\[(DEBUG|INFO)\s+(wait)\]/[\1] \2:/g' >&2 )
-
-
-################################################################################
-
-
-# The following section requires the following environment variables set:
+# The section below requires the following environment variables set:
 # - DHIS2_DATABASE_NAME
 # - DHIS2_DATABASE_USERNAME
 # - DHIS2_DATABASE_PASSWORD (optional, but strongly recommended)
+
+# The following are optional but may be required to proceed:
 # - PGHOST
 # - PGPORT
 # - PGUSER
@@ -256,6 +170,10 @@ ALTER EXTENSION postgis UPDATE;
 -- PostGIS 3.x migration action
 DROP EXTENSION IF EXISTS postgis_raster;
 
+-- PostGIS extensions may cause DHIS2 startup problems
+DROP EXTENSION IF EXISTS postgis_tiger_geocoder;
+DROP EXTENSION IF EXISTS postgis_topology;
+
 -- postgis schema effective privileges for user "$DHIS2_DATABASE_USERNAME" to use
 GRANT USAGE ON SCHEMA postgis TO $DHIS2_DATABASE_USERNAME;
 GRANT SELECT ON ALL TABLES IN SCHEMA postgis TO $DHIS2_DATABASE_USERNAME;
@@ -264,8 +182,11 @@ EOSQL
 
 # If DHIS2_DATABASE_PASSWORD is provided, set LOGIN capability and a password for DHIS2_DATABASE_USERNAME
 if [[ -n "${DHIS2_DATABASE_PASSWORD:-}" ]]; then
-  psql -v ON_ERROR_STOP=1 <<- EOSQL
+  psql --echo-all --echo-hidden -v ON_ERROR_STOP=1 <<- EOSQL
 -- Set role password and grant login
+EOSQL
+
+  psql -v ON_ERROR_STOP=1 <<- EOSQL
 ALTER ROLE $DHIS2_DATABASE_USERNAME WITH LOGIN PASSWORD '$DHIS2_DATABASE_PASSWORD';
 EOSQL
 fi
@@ -274,5 +195,9 @@ fi
 ################################################################################
 
 
-# Record script progess
-echo "$SELF: COMPLETED" | tee "$STATUS_FILE"
+if [[ -d /dhis2-init.progress/ ]]; then
+  # Record script progess
+  echo "$SELF: COMPLETED" | tee "$STATUS_FILE"
+else
+  echo "$SELF: COMPLETED"
+fi

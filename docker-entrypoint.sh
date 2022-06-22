@@ -23,52 +23,6 @@ _main() {
 
   ########
 
-  # Deprecated logic
-
-  # Set value of the deprecated DATABASE_HOST variable to DHIS2_DATABASE_HOST
-  if [ -z "${DHIS2_DATABASE_HOST:-}" ] && [ -n "${DATABASE_HOST:-}" ]; then
-    export DHIS2_DATABASE_HOST="$DATABASE_HOST"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_HOST to DHIS2_DATABASE_HOST" >&2
-  fi
-
-  # Set value of the deprecated DATABASE_PORT variable to DHIS2_DATABASE_PORT
-  if [ -z "${DHIS2_DATABASE_PORT:-}" ] && [ -n "${DATABASE_PORT:-}" ]; then
-    export DHIS2_DATABASE_PORT="$DATABASE_PORT"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_PORT to DHIS2_DATABASE_PORT" >&2
-  fi
-
-  # Set value of the deprecated DATABASE_DBNAME variable to DHIS2_DATABASE_NAME
-  if [ -z "${DHIS2_DATABASE_NAME:-}" ] && [ -n "${DATABASE_DBNAME:-}" ]; then
-    export DHIS2_DATABASE_NAME="$DATABASE_DBNAME"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_DBNAME to DHIS2_DATABASE_NAME" >&2
-  fi
-
-  # Set value of the deprecated DATABASE_USERNAME variable to DHIS2_DATABASE_USERNAME
-  if [ -z "${DHIS2_DATABASE_USERNAME:-}" ] && [ -n "${DATABASE_USERNAME:-}" ]; then
-    export DHIS2_DATABASE_USERNAME="$DATABASE_USERNAME"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_USERNAME to DHIS2_DATABASE_USERNAME" >&2
-  fi
-
-  # Set value of the deprecated DATABASE_PASSWORD variable to DHIS2_DATABASE_PASSWORD
-  if [ -z "${DHIS2_DATABASE_PASSWORD:-}" ] && [ -n "${DATABASE_PASSWORD:-}" ]; then
-    export DHIS2_DATABASE_PASSWORD="$DATABASE_PASSWORD"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_PASSWORD to DHIS2_DATABASE_PASSWORD" >&2
-  fi
-
-  # Set value of the deprecated DATABASE_PASSWORD_FILE variable to DHIS2_DATABASE_PASSWORD_FILE
-  if [ -z "${DHIS2_DATABASE_PASSWORD_FILE:-}" ] && [ -n "${DATABASE_PASSWORD_FILE:-}" ]; then
-    export DHIS2_DATABASE_PASSWORD_FILE="$DATABASE_PASSWORD_FILE"
-    echo "[DEBUG] $SELF: copy deprecated DATABASE_PASSWORD_FILE to DHIS2_DATABASE_PASSWORD_FILE" >&2
-  fi
-
-  # Set value of the deprecated REDIS_PASSWORD_FILE variable to DHIS2_REDIS_PASSWORD_FILE
-  if [ -z "${DHIS2_REDIS_PASSWORD_FILE:-}" ] && [ -n "${REDIS_PASSWORD_FILE:-}" ]; then
-    export DHIS2_REDIS_PASSWORD_FILE="$REDIS_PASSWORD_FILE"
-    echo "[DEBUG] $SELF: copy deprecated REDIS_PASSWORD_FILE to DHIS2_REDIS_PASSWORD_FILE" >&2
-  fi
-
-  ########
-
   # Match first argument to this script.
   # Example: "remco" for a full command of "docker-entrypoint.sh remco -config /etc/remco/config"
   if [ "$1" = 'remco' ]; then
@@ -133,12 +87,14 @@ _main() {
 
     ########
 
-    # Steps to perform if the running user is root.
+    # Steps to perform if the running user is root:
     if [ "$(id -u)" = '0' ]; then
 
       if [ "${DISABLE_TOMCAT_TEMPLATES:-}" != '1' ]; then
+
         # Configure tomcat server.xml as root as a "onetime" remco action.
         remco -config /etc/remco/tomcat.toml
+
       fi
 
     fi
@@ -148,29 +104,9 @@ _main() {
   ########
 
   # Again, match first argument to this script.
-  # Example: "remco" for a full command of "docker-entrypoint.sh remco -config /etc/remco/config"
-  # or, "catalina.sh" for a full command of "docker-entrypoint.sh catalina.sh run -security"
+  # Example: "remco" for a full command of "docker-entrypoint.sh remco -config /etc/remco/config",
+  # or "catalina.sh" for a full command of "docker-entrypoint.sh catalina.sh run -security"
   if [ "$1" = 'remco' ] || [ "$1" = 'catalina.sh' ]; then
-
-    # If DHIS2_DATABASE_HOST is provided, ensure DHIS2_DATABASE_HOST:DHIS2_DATABASE_PORT is in WAIT_HOSTS
-    if [ -n "${DHIS2_DATABASE_HOST:-}" ] && [[ "$WAIT_HOSTS" != *"${DHIS2_DATABASE_HOST:-}:${DHIS2_DATABASE_PORT:-5432}"* ]]; then
-      echo "[DEBUG] $SELF: add $DHIS2_DATABASE_HOST:${DHIS2_DATABASE_PORT:-5432} to WAIT_HOSTS" >&2
-      export WAIT_HOSTS="$DHIS2_DATABASE_HOST:${DHIS2_DATABASE_PORT:-5432},${WAIT_HOSTS:-}"
-    fi
-
-    # If DHIS2_REDIS_ENABLED is "true", ensure $DHIS2_REDIS_HOST:DHIS2_REDIS_PORT is in WAIT_HOSTS
-    if [ "${DHIS2_REDIS_ENABLED:-}" = "true" ] && [[ "$WAIT_HOSTS" != *"${DHIS2_REDIS_HOST:-}:${DHIS2_REDIS_PORT:-6379}"* ]]; then
-      echo "[DEBUG] $SELF: add $DHIS2_REDIS_HOST:${DHIS2_REDIS_PORT:-6379} to WAIT_HOSTS" >&2
-      export WAIT_HOSTS="$DHIS2_REDIS_HOST:${DHIS2_REDIS_PORT:-6379},${WAIT_HOSTS:-}"
-    fi
-
-    # Ensure there are no trailing commas for WAIT_HOSTS or WAIT_PATHS
-    if [ -n "${WAIT_HOSTS:-}" ]; then
-      export WAIT_HOSTS="${WAIT_HOSTS%,}"
-    fi
-    if [ -n "${WAIT_PATHS:-}" ]; then
-      export WAIT_PATHS="${WAIT_PATHS%,}"
-    fi
 
     # Print some environment variables for debugging purposes if values are set
     VARS=(
@@ -200,9 +136,25 @@ _main() {
 
     ########
 
+    # Ensure there are no trailing commas for WAIT_HOSTS or WAIT_PATHS if provided.
+    if [ -n "${WAIT_HOSTS:-}" ]; then
+      export WAIT_HOSTS="${WAIT_HOSTS%,}"
+      echo "[DEBUG] $SELF: environment WAIT_HOSTS=$WAIT_HOSTS" >&2
+    fi
+    if [ -n "${WAIT_PATHS:-}" ]; then
+      export WAIT_PATHS="${WAIT_PATHS%,}"
+      echo "[DEBUG] $SELF: environment WAIT_PATHS=$WAIT_PATHS" >&2
+
+      # Increase the timeout from 30 seconds to allow for dhis2_init to complete.
+      if [ -z "${WAIT_TIMEOUT:-}" ]; then
+        export WAIT_TIMEOUT='300'
+        echo "[DEBUG] $SELF: environment WAIT_TIMEOUT=$WAIT_TIMEOUT" >&2
+      fi
+    fi
+
     # Wait for hosts specified in the environment variable WAIT_HOSTS and/or paths in WAIT_PATHS.
-    # If it times out (default is 30s) before the targets are available, it will exit with a
-    # non-0 code, and this script will exit because of the bash options set at the top.
+    # If it times out before the hostss and/or paths are available, it will exit with a non-0
+    # signal, and this script will exit because of the bash options set at the top.
     if [ -n "${WAIT_HOSTS:-}" ] || [ -n "${WAIT_PATHS:-}" ]; then
       echo "[DEBUG] $SELF: running /usr/local/bin/wait" >&2
       /usr/local/bin/wait 2> >( sed -r -e 's/^\[(DEBUG|INFO)\s+(wait)\]/[\1] \2:/g' >&2 )
@@ -220,7 +172,7 @@ _main() {
 
     ########
 
-    # Steps to perform if the running user is root.
+    # Steps to perform if the running user is root:
     if [ "$(id -u)" = '0' ]; then
 
       # The paths below might be mounts, so ensure that tomcat is the owner and can write

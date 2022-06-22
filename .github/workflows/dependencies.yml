@@ -1,16 +1,25 @@
-name: notify
+name: dependencies
 
 on:
   push:
+    branches-ignore:
+      - 'dependabot/**'
+      - 'manual-dependencies/**'
+    paths:
+      - '.env.example'
+      - '.github/workflows/dependencies.yml'
+      - 'docker-compose.yml'
+      - 'Dockerfile'
+  pull_request:
     branches:
       - main
     paths:
       - '.env.example'
-      - '.github/workflows/notify.yml'
+      - '.github/workflows/dependencies.yml'
       - 'docker-compose.yml'
       - 'Dockerfile'
   schedule:
-    - cron: '3 5 * * *'
+    - cron: '3 6 * * *'
 
 defaults:
   run:
@@ -23,7 +32,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
       - name: Query version of gosu
         id: gosu
         run: |
@@ -49,7 +58,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@ec3a7ce113134d7a93b817d10a8272cb61118579
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
       - name: Query version of DHIS2
         id: dhis2
         run: |
@@ -110,31 +119,18 @@ jobs:
   notify:
     name: Notify of dependencies that need to be updated
 
+    if: |
+      needs.file_dockerfile.outputs.gosu != needs.github_tags.outputs.gosu
+      || needs.file_dockerfile.outputs.remco != needs.github_tags.outputs.remco
+      || needs.file_dockerfile.outputs.wait != needs.github_tags.outputs.wait
+
     needs:
       - file_dockerfile
-      - file_envexample
       - github_tags
-      - image_latest
 
     runs-on: ubuntu-20.04
 
     steps:
-
-      - name: Send message to Slack about DHIS2_TAG in .env.example
-        if: ${{ needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2 }}
-        uses: slackapi/slack-github-action@410ae57cff5c6b682b106440be0e6c7eb8c98c9d
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        with:
-          payload: "{\"level\": \":warning: WARNING\", \"message\": \"DHIS2_TAG in .env.example (${{ needs.file_envexample.outputs.dhis2 }}) does not match version in ghcr.io/baosystems/dhis2:latest (${{ needs.image_latest.outputs.dhis2 }})\"}"
-
-      - name: Send message to Slack about Tomcat version in .env.example
-        if: ${{ needs.file_envexample.outputs.tomcat != needs.image_latest.outputs.tomcat }}
-        uses: slackapi/slack-github-action@410ae57cff5c6b682b106440be0e6c7eb8c98c9d
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        with:
-          payload: "{\"level\": \":warning: WARNING\", \"message\": \"Tomcat version in .env.example (${{ needs.file_envexample.outputs.tomcat }}) does not match version in ghcr.io/baosystems/dhis2:latest (${{ needs.image_latest.outputs.tomcat }})\"}"
 
       - name: Send message to Slack about gosu version in Dockerfile
         if: ${{ needs.file_dockerfile.outputs.gosu != needs.github_tags.outputs.gosu }}
@@ -159,3 +155,113 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
           payload: "{\"level\": \":warning: WARNING\", \"message\": \"wait version in Dockerfile (${{ needs.file_dockerfile.outputs.wait }}) does not match the latest tag in github.com/ufoscout/docker-compose-wait (${{ needs.github_tags.outputs.wait }})\"}"
+
+  envexample:
+    name: Update versions in .env.example and create auto-merging pull request
+
+    if: |
+      needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2
+      || needs.file_envexample.outputs.tomcat != needs.image_latest.outputs.tomcat
+
+    needs:
+      - file_envexample
+      - image_latest
+
+    runs-on: ubuntu-20.04
+
+    steps:
+
+      - name: Checkout this repository
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+
+      - name: Update version of DHIS2
+        if: ${{ needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2 }}
+        run: |
+          set -x
+
+          echo '[DEBUG] DHIS2_TAG_CURRENT=${{ needs.file_envexample.outputs.dhis2 }}'
+          echo '[DEBUG] DHIS2_TAG_NEXT=${{ needs.image_latest.outputs.dhis2 }}'
+
+          DHIS2_MAJOR_CURRENT="$( cut -c1-4 <<< "${{ needs.file_envexample.outputs.dhis2 }}" )"
+          DHIS2_MAJOR_NEXT="$( cut -c1-4 <<< "${{ needs.image_latest.outputs.dhis2 }}" )"
+          echo "[DEBUG] DHIS2_MAJOR_CURRENT=$DHIS2_MAJOR_CURRENT"
+          echo "[DEBUG] DHIS2_MAJOR_NEXT=$DHIS2_MAJOR_NEXT"
+
+          sed \
+            -e 's/${{ needs.file_envexample.outputs.dhis2 }}/${{ needs.image_latest.outputs.dhis2 }}/g' \
+            -e "s/${DHIS2_MAJOR_CURRENT}/${DHIS2_MAJOR_NEXT}/g" \
+            -i .env.example
+
+          echo '[DEBUG] contents of .env.example:'
+          cat .env.example
+
+      - name: Update version of Tomcat
+        if: ${{ needs.file_envexample.outputs.tomcat != needs.image_latest.outputs.tomcat }}
+        run: |
+          set -x
+
+          echo '[DEBUG] current=${{ needs.file_envexample.outputs.tomcat }}'
+          echo '[DEBUG] next=${{ needs.image_latest.outputs.tomcat }}'
+
+          sed \
+            -e 's/${{ needs.file_envexample.outputs.tomcat }}/${{ needs.image_latest.outputs.tomcat }}/g' \
+            -i .env.example
+
+          echo '[DEBUG] contents of .env.example:'
+          cat .env.example
+
+      - name: Create Pull Request
+        id: cpr
+        uses: peter-evans/create-pull-request@923ad837f191474af6b1721408744feb989a4c27
+        with:
+          # GITHUB_TOKEN does not have "repo" permissions (https://docs.github.com/en/actions/security-guides/automatic-token-authentication)
+          # Personal Access Token with "repo" is necessary to create commits
+          token: ${{ secrets.PAT }}  # Added at https://github.com/baosystems/docker-dhis2/settings/secrets/actions
+          author: baosystems[utility] <100785015+baosystems-utility@users.noreply.github.com>  # Public profile name and private email for the owner of the PAT
+          commit-message: "chore: update dependencies in .env.example"
+          title: Update dependencies in .env.example
+          add-paths: |
+            .env.example
+          delete-branch: true
+          branch: manual-dependencies/envexample
+          labels: |
+            dependencies
+
+      - name: Enable Pull Request Automerge
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        uses: peter-evans/enable-pull-request-automerge@a5005d88fea9f74f18a9e0d00271285e4a58f484
+        with:
+          token: ${{ secrets.PAT }}
+          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          merge-method: rebase
+
+      - name: Auto-approve Pull Request
+        if: steps.cpr.outputs.pull-request-operation == 'created'
+        uses: juliangruber/approve-pull-request-action@2e3a01bea165781841c2ebaf0a8b3202557383e2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          number: ${{ steps.cpr.outputs.pull-request-number }}
+
+  check:
+    name: Check if required jobs passed  # this job name is to be used as the single required status check in branch protection
+
+    if: always()
+
+    needs:
+      - file_dockerfile
+      - file_envexample
+      - github_tags
+      - image_latest
+      - notify
+      - envexample
+
+    runs-on: ubuntu-20.04
+
+    steps:
+
+      # See https://github.com/re-actors/alls-green/blob/3a2de129/README.md for why this is here
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@3a2de129f0713010a71314c74e33c0e3ef90e696
+        with:
+          allowed-skips: notify, envexample
+          jobs: ${{ toJSON(needs) }}

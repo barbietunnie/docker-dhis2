@@ -2,9 +2,8 @@
 
 DHIS2 run by Tomcat.
 
-The default command is `catalina.sh run` like the Tomcat container that it is based on.
-Alternatively, the command can be set to `remco` to generate a _dhis.conf_ file from environment
-variables and then run `catalina.sh run`.
+The container image default command is `remco` to generate the _/opt/dhis2/dhis.conf_ and
+_/usr/local/tomcat/conf/server.xml_ files from environment variables and then run `catalina.sh run`.
 
 You can access the DHIS2 server on port `80` or `8080`. Accessing on `8080` forwards the request directly to _Tomcat_,
 while accessing on port `80 `uses _NGINX_ as the proxy. Accessing on port 80 also gives the added advantage of using 
@@ -18,10 +17,10 @@ The following occur when using _docker-entrypoint.sh_ as the entry point and the
 _remco_:
 
 * If `DHIS2_DATABASE_PASSWORD` is empty or not set, the contents of `DHIS2_DATABASE_PASSWORD_FILE`
-  will be set in `DHIS2_DATABASE_PASSWORD`.
+  will be set as `DHIS2_DATABASE_PASSWORD`.
 
 * If `DHIS2_REDIS_PASSWORD` is empty or not set, the contents of `DHIS2_REDIS_PASSWORD_FILE` will be
-  set in `DHIS2_REDIS_PASSWORD`.
+  set as `DHIS2_REDIS_PASSWORD`.
 
 * If `SYSTEM_FQDN` is empty or not set, it will be exported as the output of `hostname --fqdn`.
 
@@ -31,23 +30,21 @@ The following occur when using _docker-entrypoint.sh_ as the entry point and the
 _remco_ or _catalina.sh_:
 
 * Use `WAIT_HOSTS`, `WAIT_PATHS`, and [others as
-  documented](https://github.com/ufoscout/docker-compose-wait#additional-configuration-options) to
-  wait for other hosts or file paths before proceeding. If none are provided, `wait` will exit with
-  code 0 immediately and the container will proceed. If `WAIT_HOSTS` is not set and `DATABASE_HOST`
-  is provided, `WAIT_HOSTS` will be set as `WAIT_HOSTS=${DATABASE_HOST}:${DATABASE_PORT:-5432}`.
-  Similarly, if Redis is enabled, the host and port will be added to `WAIT_HOSTS`.
+  documented to wait](https://github.com/ufoscout/docker-compose-wait#additional-configuration-options)
+  for other hosts or file paths before proceeding. If none are provided, `wait` will exit with code 0
+  immediately and the container will proceed.
 
 * If `FORCE_HEALTHCHECK_WAIT` is set to `1`, netcat will listen on port 8080 and respond to a single
-  http request with "200 OK" and an empty body. This is to allow a new container to be marked as
-  healthy before proceeding to start Tomcat, to which subsequent health checks will actually hit
-  DHIS2.
+  http request with "200 OK" and an empty body. This is to allow an orchestrator to mark a new
+  container as healthy before proceeding to start Tomcat, to which subsequent health checks will
+  actually hit DHIS2.
 
-* If the detected user is the root user, paths _/opt/dhis2/files_, _/opt/dhis2/logs_, and
+* If the detected user is the *root* user, paths _/opt/dhis2/files_, _/opt/dhis2/logs_, and
   _/usr/local/tomcat/logs_ will be owned by *tomcat* and the user will be given write access. This
   is to ensure the *tomcat* user always has the ability to write, even if those paths are volume
   mounts.
 
-* If the detected user is the root user, the full command will be run as the *tomcat* user via
+* If the detected user is the *root* user, the full command will be run as the *tomcat* user via
   `gosu`.
 
 If the command does not start with _remco_ or _catalina.sh_, then it will be run with `exec` so it
@@ -55,48 +52,50 @@ can proceed as pid 1.
 
 ## Remco
 
-The default command is `catalina.sh run`, but you can use `remco` instead.
-[Remco](https://github.com/HeavyHorst/remco) is used to create _dhis.conf_ and start Tomcat. It will
-periodically check to see if _dhis.conf_ needs updated, and if so, restart Tomcat.
+The default command is `remco`, NOT `catalina.sh run`. [Remco](https://github.com/HeavyHorst/remco)
+is used to create _dhis.conf_ and start Tomcat. It will periodically check to see if _dhis.conf_
+needs updated, and if so, restart Tomcat.
 
 ## dhis2-init
 
-If the container command is set to `dhis2_init.sh`, each script in _dhis2-init.d_ will be run.
-Unless specified to not be used, the _docker-entrypoint.sh_ script will perform the actions listed
-above as it pertains to other commands. If _/dhis2-init.progress/_ is shared with other instances of
-dhis2-init, only one instance of a script will be performed at a time. Environment variable
-`DHIS2_INIT_SKIP` can be set as a comma-seperated value for files in _dhis2-init.d_ to skip. If
-`dhis2_init.sh` is not run, it is the responsibility of the operator to ensure the database is
-initiated and ready to be used by DHIS2.
+When the container command is set to `dhis2_init.sh`, each script in
+_/usr/local/share/dhis2-init.d/_ will be run. If _/dhis2-init.progress/_ is shared with other
+instances of dhis2-init, only one instance of a script will be performed at a time. Environment
+variable `DHIS2_INIT_SKIP` can be set as a comma-seperated value for files in
+_/usr/local/share/dhis2-init.d/_ to skip.
+
+**NOTE:** If `dhis2_init.sh` is not run, it is the responsibility of the operator to ensure the
+database is initiated and ready prior to being used by DHIS2.
+
+The following environment variables are set in `dhis2_init.sh` but can be changed as necessary:
+
+  * `DHIS2_DATABASE_NAME` (default: "dhis2")
+  * `DHIS2_DATABASE_USERNAME` (default: "dhis")
+  * `DHIS2_DATABASE_PASSWORD` (optional, but strongly recommended), or contents in
+    `DHIS2_DATABASE_PASSWORD_FILE`
+  * `PGHOST`, or `DHIS2_DATABASE_HOST` (default: "localhost")
+  * `PGPORT`, or `DHIS2_DATABASE_PORT` (default: "5432")
+  * `PGDATABASE` (default: "postgres")
+  * `PGUSER` (default: "postgres", must be a PostgreSQL superuser)
+  * `PGPASSWORD` (optional, but strongly recommended, may be required for `PGUSER` in most
+    PostgreSQL installations), or contents in `PGPASSWORD_FILE`
+
+### dhis2-init.d scripts
 
 * `10_dhis2-database.sh`: Create and initialize a PostgreSQL database with PostGIS. If `WAIT_HOSTS`
-  is empty or null, it will be set to `PGHOST`/`DHIS2_DATABASE_HOST`:`PGPORT`/"5432" and the script
-  will proceed once the database service is ready. The script requires the following environment
-  variables set:
+  or `WAIT_PATHS` are provided, it will wait for hosts or file paths before proceeding. In
+  addition to various `PG*` values being set for connecting to the database, the script
+  requires the following environment variables set:
 
-    * `DHIS2_DATABASE_NAME` (default: "dhis2")
-    * `DHIS2_DATABASE_USERNAME` (default: "dhis")
-    * `DHIS2_DATABASE_PASSWORD`, or contents in `DHIS2_DATABASE_PASSWORD_FILE` (optional, but
-      strongly recommended)
-    * `PGHOST`, or `DHIS2_DATABASE_HOST` (default: "localhost")
-    * `PGPORT` (default: "5432")
-    * `PGUSER` (default: "postgres", must be a PostgreSQL superuser)
-    * `PGPASSWORD` (required for `PGUSER` in most PostgreSQL installations), or contents in
-      `PGPASSWORD_FILE` (optional, but strongly recommended)
+    * `DHIS2_DATABASE_NAME`
+    * `DHIS2_DATABASE_USERNAME`
+    * `DHIS2_DATABASE_PASSWORD`
 
 * `15_pgstatstatements.sh`: Add the
   [pg_stat_statements](https://www.postgresql.org/docs/current/pgstatstatements.html) extension to
-  the `PGDATABASE`. This module is included in the PostGIS container image. If `WAIT_HOSTS` is empty
-  or null, it will be set to `PGHOST`/`DHIS2_DATABASE_HOST`:`PGPORT`/"5432" and the script will
-  proceed once the database service is ready. The script requires the following environment
-  variables set:
-
-    * `PGDATABASE` (default: "postgres")
-    * `PGHOST`, or `DHIS2_DATABASE_HOST` (default: "localhost")
-    * `PGPORT` (default: "5432")
-    * `PGUSER` (default: "postgres", must be a PostgreSQL superuser)
-    * `PGPASSWORD` (required for `PGUSER` in most PostgreSQL installations), or contents in
-      `PGPASSWORD_FILE` (optional, but strongly recommended)
+  the `PGDATABASE`. This module is included in the PostGIS container image. If `WAIT_HOSTS` or
+  `WAIT_PATHS` are provided, it will wait for hosts or file paths before proceeding. The various
+  `PG*` values can be set as needed to connect to the database.
 
 * `20_dhis2-initwar.sh`: If the last line in _/dhis2-init.progress/20_dhis2-initwar_history.csv_
   does not contain a line stating that the current DHIS2 version and build revision started
@@ -108,8 +107,8 @@ initiated and ready to be used by DHIS2.
 
 # Settings
 
-The following **OPTIONAL** environment variables are used in `docker-entrypoint.sh` and the first
-argument is _remco_:
+The following **OPTIONAL** environment variables are used in `docker-entrypoint.sh` and container
+command begins with _remco_:
 
 * `DHIS2_DATABASE_PASSWORD_FILE`: if `DHIS2_DATABASE_PASSWORD` is empty or not set, the contents of
   `DHIS2_DATABASE_PASSWORD_FILE` will be set in `DHIS2_DATABASE_PASSWORD`.
@@ -120,11 +119,11 @@ argument is _remco_:
 * `DISABLE_TOMCAT_TEMPLATES`: If set to **1**, the templates for Tomcat configuration files will not
   be generated.
 
-The following **OPTIONAL** environment variables are used in `docker-entrypoint.sh` and the first
-argument is _remco_ or _catalina.sh_:
+The following **OPTIONAL** environment variables are used in `docker-entrypoint.sh` and container
+command begins with _remco_ or _catalina.sh_:
 
 * `FORCE_HEALTHCHECK_WAIT`: if set to **1**, netcat will listen on port 8080 and respond to a single
-  http request with "200 OK" to initialize an external health check before proceeding.
+  http request with "200 OK" to allow for an external health check to initialize before proceeding.
 
 ## Generating dhis.conf with Remco
 
@@ -132,41 +131,29 @@ The following environment variables can be used to create _dhis.conf_ when using
 command.
 
 See the [DHIS2
-documentation](https://docs.dhis2.org/en/manage/performing-system-administration/dhis-core-version-236/installation.html)
+documentation](https://docs.dhis2.org/en/manage/performing-system-administration/dhis-core-version-238/installation.html) and [source](https://github.com/dhis2/dhis2-core/blob/2.38/dhis-2/dhis-support/dhis-support-external/src/main/java/org/hisp/dhis/external/conf/ConfigurationKey.java)
 for valid values in _dhis.conf_. _Unless otherwise mentioned, no default value is provided:_
 
 * `DHIS2_DATABASE_HOST`: Database hostname used to set the jdbc value in _connection.url_. If not
   provided, _connection.url_ will be set to _jdbc:postgresql:${DHIS2_DATABASE_NAME:-dhis2}_.
-  **NOTE:** If `DHIS2_CONNECTION_URL` is provided, it will take precedent.
+  **NOTE:** If `DHIS2_CONNECTION_URL` is provided, this option will be ignored.
 
-    * `DATABASE_HOST` **[DEPRECATED]**: Same as `DHIS2_DATABASE_HOST`.
-
-* `DHIS2_DATABASE_PORT`: If this and `DHIS2_DATABASE_HOST` are provided, used to set the jdbc value
-  in _connection.url_; default is "5432". **NOTE:** If `DHIS2_CONNECTION_URL` is provided, it will
-  take precedent.
-
-    * `DATABASE_PORT` **[DEPRECATED]**: Same as `DHIS2_DATABASE_PORT`.
+* `DHIS2_DATABASE_PORT`: If this and `DHIS2_DATABASE_HOST` are provided, this is used to set the
+  jdbc value in _connection.url_; default is "5432". **NOTE:** If `DHIS2_CONNECTION_URL` is
+  provided, this option will be ignored.
 
 * `DHIS2_DATABASE_NAME`: Database name used to set the jdbc value in _connection.url_; default is
-  "dhis2". **NOTE:** If `DHIS2_CONNECTION_URL` is provided, it will take precedent.
-
-    * `DATABASE_DBNAME` **[DEPRECATED]**: Same as `DHIS2_DATABASE_NAME`.
+  "dhis2". **NOTE:** If `DHIS2_CONNECTION_URL` is provided, this option will be ignored.
 
 * `DHIS2_DATABASE_USERNAME`: Value of _connection.username_; default is "dhis". **NOTE:** If
-  `DHIS2_CONNECTION_USERNAME` is provided, it will take precedent.
-
-    * `DATABASE_USERNAME` **[DEPRECATED]**: Same as `DHIS2_DATABASE_USERNAME`.
+  `DHIS2_CONNECTION_USERNAME` is provided, this option will be ignored.
 
 * `DHIS2_DATABASE_PASSWORD`: Value of _connection.password_. **NOTE:** If
-  `DHIS2_CONNECTION_PASSWORD` is provided, it will take precedent.
+  `DHIS2_CONNECTION_PASSWORD` is provided, this option will be ignored.
 
-    * `DATABASE_PASSWORD` **[DEPRECATED]**: Same as `DHIS2_DATABASE_PASSWORD`.
-
-* `DHIS2_DATABASE_PASSWORD_FILE`: Value of _connection.password_ will be set as the content of
-  the path provided. **NOTE:** If `DHIS2_CONNECTION_PASSWORD` or `DHIS2_DATABASE_PASSWORD` provided,
-  they will take precedent.
-
-    * `DATABASE_PASSWORD_FILE` **[DEPRECATED]**: Same as `DHIS2_DATABASE_PASSWORD_FILE`.
+* `DHIS2_DATABASE_PASSWORD_FILE`: Value of _connection.password_ will be set as the content of the
+  path provided. **NOTE:** If `DHIS2_CONNECTION_PASSWORD` or `DHIS2_DATABASE_PASSWORD` provided,
+  this option will be ignored.
 
 * `DHIS2_SERVER_BASEURL`: Value of _server.base.url_.
 
@@ -177,24 +164,13 @@ for valid values in _dhis.conf_. _Unless otherwise mentioned, no default value i
 
 * `DHIS2_REDIS_HOST`: Value of _redis.host_.
 
-    * `REDIS_HOST` **[DEPRECATED]**: Same as `DHIS2_REDIS_HOST`.
-
 * `DHIS2_REDIS_PORT`: Value of _redis.port_.
-
-    * `REDIS_PORT` **[DEPRECATED]**: Same as `DHIS2_REDIS_PORT`.
 
 * `DHIS2_REDIS_PASSWORD`: Value of _redis.password_.
 
-    * `REDIS_PASSWORD` **[DEPRECATED]**: Same as `DHIS2_REDIS_PASSWORD`.
-
 * `DHIS2_REDIS_USE_SSL`: Value of _redis.use.ssl_.
 
-    * `REDIS_USESSL` **[DEPRECATED]**: If set and any value is provided, the value of
-      _redis.use.ssl_ will be set to "true".
-
 * `DHIS2_LEADER_TIME_TO_LIVE_MINUTES`: Value of _leader.time.to.live.minutes_.
-
-    * `REDIS_LEADERTTL` **[DEPRECATED]**: Same as `DHIS2_LEADER_TIME_TO_LIVE_MINUTES`.
 
 * `DHIS2_CLUSTER_HOSTNAME`: Value of _cluster.hostname_. If not provided and both `SERVICE_NAME` and
   `SYSTEM_IP` are provided by the entry point, _cluster.hostname_ will be set as the value of
@@ -248,6 +224,8 @@ for valid values in _dhis.conf_. _Unless otherwise mentioned, no default value i
 
 * `DHIS2_SYSTEM_SESSION_TIMEOUT`: Value of _system.session.timeout_.
 
+* `DHIS2_SYSTEM_SQL_VIEW_TABLE_PROTECTION`: Value of _system.sql_view_table_protection_.
+
 * `DHIS2_CHANGELOG_AGGREGATE`: Value of _changelog.aggregate_.
 
 * `DHIS2_CHANGELOG_TRACKER`: Value of _changelog.tracker_.
@@ -285,6 +263,10 @@ for valid values in _dhis.conf_. _Unless otherwise mentioned, no default value i
 * `DHIS2_FILESTORE_SECRET`: Value of _filestore.secret_.
 
 * `DHIS2_ANALYTICS_CACHE_EXPIRATION`: Value of _analytics.cache.expiration_.
+
+### 2.35.2  and up
+
+* `DHIS2_SYSTEM_PROGRAM_RULE_SERVER_EXECUTION`: Value of _system.program_rule.server_execution_.
 
 ### 2.36 and up
 
@@ -410,13 +392,13 @@ remove existing data and re-initialize the database.
 
 ```bash
 # Stop Tomcat
-docker compose stop dhis2
+docker compose rm --force --stop dhis2
 
 # Drop and re-create the database using a helper script in the container image
 docker compose run --rm dhis2_init db-empty.sh
 
 # Start Tomcat
-docker compose start dhis2
+docker compose up --detach dhis2
 
 # Watch Tomcat logs (press Ctrl+c to exit logs)
 docker compose logs --follow --tail='10' dhis2
@@ -430,32 +412,32 @@ match the least-privilege approach used in this setup.
 
 ```bash
 # Download database file to your system
-wget -nc -O dhis2-db-sierra-leone-2.37.sql.gz https://databases.dhis2.org/sierra-leone/2.37/dhis2-db-sierra-leone.sql.gz
+wget -nc -O dhis2-db-sierra-leone.sql.gz https://databases.dhis2.org/sierra-leone/2.38/dhis2-db-sierra-leone.sql.gz
 
 # Stop Tomcat
-docker compose stop dhis2
+docker compose rm --force --stop dhis2
 
 # Drop and re-create the database using the db-empty.sh helper script
 docker compose run --rm dhis2_init db-empty.sh
 
 # Import the database backup into the empty database
-gunzip -c dhis2-db-sierra-leone-2.37.sql.gz | docker compose exec -T database psql -q -v 'ON_ERROR_STOP=1' --username='postgres' --dbname='dhis2'
+gunzip -c dhis2-db-sierra-leone.sql.gz | docker compose exec -T database psql -q -v 'ON_ERROR_STOP=1' --username='postgres' --dbname='dhis2'
 
 # If the previous command didn't work, try the steps below which will copy the file into the container before importing
-#docker cp dhis2-db-sierra-leone-2.37.sql.gz "$( docker compose ps -q 'database' | head -n1 )":/tmp/db.sql.gz
+#docker cp dhis2-db-sierra-leone.sql.gz "$( docker compose ps -q 'database' | head -n1 )":/tmp/db.sql.gz
 #docker compose exec database bash -c "gunzip -c /tmp/db.sql.gz | psql -v 'ON_ERROR_STOP=1' --username='postgres' --dbname='dhis2' && rm -v /tmp/db.sql.gz"
 
 # Re-initialize DHIS2
-docker compose run --rm --env 'DHIS2_INIT_FORCE=1' dhis2_init
+docker compose run --rm --env 'DHIS2_INIT_FORCE=1' dhis2_init dhis2-init.sh
 
 # Start Tomcat
-docker compose start dhis2
+docker compose up --detach dhis2
 ```
 
 ### Export the database to a file on your system
 
 An included helper script will run `pg_dump` with generated tables excluded and perform some minor
-changes to increase the liklihood of being imported on other systems.
+changes to increase the likelihood of being imported on other systems.
 
 ```bash
 # Stop Tomcat
@@ -476,23 +458,21 @@ Because two versions of DHIS2 should not be running at the same time, stop the d
 first.
 
 ```bash
-# Let's say you started with 2.36.6:
+# Let's say you started with 2.36.0:
 
-cat >> .env <<'EOF'
-DHIS2_TAG=2.36.6
+cat > .env <<'EOF'
+DHIS2_TAG=2.36.0
 EOF
 
 docker compose up --detach
 
-# Later, upgrade to 2.37.2:
+# Later, upgrade to 2.38.0:
 
-cat >> .env <<'EOF'
-DHIS2_TAG=2.37.2
+cat > .env <<'EOF'
+DHIS2_TAG=2.38.0
 EOF
 
-docker compose stop dhis2
-
-docker compose rm -f -s dhis2_init
+docker compose rm --force --stop dhis2 dhis2_init
 
 docker compose pull
 

@@ -9,24 +9,6 @@ set -Eeo pipefail
 ################################################################################
 
 
-SELF="$( basename "$0" )"
-
-echo "[INFO] $SELF: started..." >&2  # Using stderr for info messages
-
-
-################################################################################
-
-
-# Deprecated logic
-
-# Set value of the deprecated DATABASE_HOST variable to DHIS2_DATABASE_HOST
-if [ -z "${DHIS2_DATABASE_HOST:-}" ] && [ -n "${DATABASE_HOST:-}" ]; then
-  export DHIS2_DATABASE_HOST="$DATABASE_HOST"
-  echo "[DEBUG] $SELF: copy deprecated DATABASE_HOST to DHIS2_DATABASE_HOST" >&2
-fi
-
-########
-
 # If PGPASSWORD is empty or null, set it to the contents of PGPASSWORD_FILE
 if [[ -z "${PGPASSWORD:-}" ]] && [[ -r "${PGPASSWORD_FILE:-}" ]]; then
   export PGPASSWORD="$(<"${PGPASSWORD_FILE}")"
@@ -51,23 +33,33 @@ if [[ -z "${PGUSER:-}" ]]; then
   export PGUSER='postgres'
 fi
 
-# If WAIT_HOSTS is empty or null, set to PGHOST:PGPORT
-if [[ -z "${WAIT_HOSTS:-}" ]]; then
-  export WAIT_HOSTS="${PGHOST}:${PGPORT}"
-fi
-
-# Disable wait delay as this script is designed to be run interactively
-export WAIT_BEFORE='0'
-
 
 ################################################################################
 
 
-# Wait for hosts specified in the environment variable WAIT_HOSTS (noop if not set).
-# If it times out before the targets are available, it will exit with a non-0 code,
-# and this script will quit because of the bash option "set -e" above.
-# https://github.com/ufoscout/docker-compose-wait
-/usr/local/bin/wait 2>/dev/null  # No output to stderr due to strange docker compose run output line break issue
+# Proceed only if wait is available
+if [[ -x /usr/local/bin/wait ]]; then
+
+  # Ensure there are no trailing commas for WAIT_HOSTS or WAIT_PATHS if provided
+  if [[ -n "${WAIT_HOSTS:-}" ]]; then
+    export WAIT_HOSTS="${WAIT_HOSTS%,}"
+  fi
+  if [[ -n "${WAIT_PATHS:-}" ]]; then
+    export WAIT_PATHS="${WAIT_PATHS%,}"
+  fi
+
+  if [[ -n "${WAIT_HOSTS:-}" ]] || [[ -n "${WAIT_PATHS:-}" ]]; then
+    # Disable wait delay as this script is designed to be run interactively
+    export WAIT_BEFORE='0'
+
+    # Wait for hosts specified in the environment variable WAIT_HOSTS (noop if not set).
+    # If it times out before the targets are available, it will exit with a non-0 code,
+    # and this script will quit because of the bash option "set -e" above.
+    # https://github.com/ufoscout/docker-compose-wait
+    /usr/local/bin/wait 2>/dev/null  # No output to stderr due to strange docker compose run output line break issue
+  fi
+
+fi
 
 
 ################################################################################
@@ -80,9 +72,6 @@ export WAIT_BEFORE='0'
 # - PGUSER
 # - PGPASSWORD
 
-
-# Using stderr for log output in this script to avoid being in a stdout-captured file
-echo "[INFO] $SELF: Exporting database \"$DHIS2_DATABASE_NAME\":" >&2
 
 pg_dump \
   "$DHIS2_DATABASE_NAME" \
@@ -101,13 +90,5 @@ pg_dump \
     --regexp-extended \
     -e '/^-- Dumped by pg_dump/,/^-- Name: postgis/{/^-- Dumped by pg_dump/!{/^-- Name: postgis/!d}}' \
     -e '/^-- Name: postgis/i \\nSET check_function_bodies = false;\n\n--' \
-    -e 's/postgis\.(geometry)/\1/g' \
-    -e 's/( postgis) WITH SCHEMA postgis;/\1;/'
-
-
-################################################################################
-
-
-# Output script progess
-# Using stderr for log output in this script to avoid being in a stdout-captured file
-echo "$SELF: COMPLETED" >&2
+    -e 's/(postgis|public)\.(geometry)/\2/g' \
+    -e 's/( postgis) WITH SCHEMA (postgis|public);/\1;/'
