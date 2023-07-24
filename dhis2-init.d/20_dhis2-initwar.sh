@@ -79,7 +79,7 @@ if [[ -d /dhis2-init.progress/ ]]; then
   fi
 
   # Set DHIS2 build information (logic also used in docker-entrypoint.sh)
-  DHIS2_BUILD_PROPERTIES="$( unzip -q -p "$( find /usr/local/tomcat/webapps/ROOT/WEB-INF/lib -maxdepth 1 -type f -name "dhis-service-core-2.*.jar" )" build.properties )"
+  DHIS2_BUILD_PROPERTIES="$( unzip -q -p "$( find /usr/local/tomcat/webapps/ROOT/WEB-INF/lib -maxdepth 1 -type f -name 'dhis-service-core-[0-9]*.jar' )" build.properties )"
   DHIS2_BUILD_VERSION="$( awk -F'=' '/^build\.version/ {gsub(/ /, "", $NF); print $NF}' <<< "$DHIS2_BUILD_PROPERTIES" )"
   DHIS2_BUILD_REVISION="$( awk -F'=' '/^build\.revision/ {gsub(/ /, "", $NF); print $NF}' <<< "$DHIS2_BUILD_PROPERTIES" )"
   DHIS2_BUILD_TIME="$( awk -F'=' '/^build\.time/ {sub(/ /, "", $NF); print $NF}' <<< "$DHIS2_BUILD_PROPERTIES" )"
@@ -99,17 +99,25 @@ fi
 # Set CATALINA_PID to improve chances of a clean shutdown
 export CATALINA_PID="${CATALINA_HOME:-/usr/local/tomcat}/temp/catalina.pid"
 
-# Use remco to generate dhis.conf
-# Entrypoint will wait for the database server to be available and run remco as the tomcat user
-docker-entrypoint.sh \
+# Use remco to generate configuration file
+echo "[INFO] $SELF: Generate dhis.conf from template"
+if [ "$(id -u)" = '0' ]; then
+  gosu tomcat \
+    remco -config /etc/remco/dhis2-onetime.toml
+else
   remco -config /etc/remco/dhis2-onetime.toml
+fi
 
 # Start Tomcat in the background as the tomcat user
 echo "[INFO] $SELF: Start Tomcat in the background: CATALINA_PID=$CATALINA_PID catalina.sh start"
-gosu tomcat \
+if [ "$(id -u)" = '0' ]; then
+  gosu tomcat \
+    catalina.sh start
+else
   catalina.sh start
+fi
 
-# Wait for Tomcat to start
+# Give Tomcat time to start up
 sleep 3
 
 # Assume DHIS2 is ready when the login page renders
@@ -128,8 +136,12 @@ fi
 
 # Stop the background Tomcat process
 echo "[INFO] $SELF: Stop Tomcat: CATALINA_PID=$CATALINA_PID catalina.sh stop -force"
-gosu tomcat \
+if [ "$(id -u)" = '0' ]; then
+  gosu tomcat \
+    catalina.sh stop 90 -force
+else
   catalina.sh stop 90 -force
+fi
 
 
 ################################################################################

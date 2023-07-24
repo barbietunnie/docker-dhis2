@@ -29,89 +29,77 @@ jobs:
 
   file_dockerfile:
     name: Query versions in Dockerfile
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
       - name: Query version of gosu
         id: gosu
         run: |
           set -x
-          echo "::set-output name=version::$( awk -F'=' '/^ARG GOSU_VERSION/ {print $NF}' Dockerfile )"
+          echo "version=$( awk -F'=' '/^ARG GOSU_VERSION=/ {print $NF}' Dockerfile )" >> $GITHUB_OUTPUT
       - name: Query version of remco
         id: remco
         run: |
           set -x
-          echo "::set-output name=version::$( awk -F'=' '/^ARG REMCO_VERSION/ {print $NF}' Dockerfile )"
-      - name: Query version of wait
-        id: wait
-        run: |
-          set -x
-          echo "::set-output name=version::$( awk -F'=' '/^ARG WAIT_VERSION/ {print $NF}' Dockerfile )"
+          echo "version=$( awk -F'=' '/^ARG REMCO_VERSION=/ {print $NF}' Dockerfile )" >> $GITHUB_OUTPUT
     outputs:
       gosu: ${{ steps.gosu.outputs.version }}
       remco: ${{ steps.remco.outputs.version }}
-      wait: ${{ steps.wait.outputs.version }}
 
   file_envexample:
     name: Query versions in .env.example
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout this repository
-        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
       - name: Query version of DHIS2
         id: dhis2
         run: |
           set -x
-          echo "::set-output name=version::$( source .env.example && echo "$DHIS2_TAG" )"
+          echo "version=$( source .env.example && echo "$DHIS2_TAG" )" >> $GITHUB_OUTPUT
       - name: Query version of Tomcat
         id: tomcat
         run: |
           set -x
-          echo "::set-output name=version::$( grep --only-matching --extended-regexp 'tomcat[0-9]{1,2}\.[0-9.]+' .env.example | sed 's/^tomcat//' )"
+          echo "version=$( grep --only-matching --extended-regexp 'tomcat[0-9]{1,2}\.[0-9.]+' .env.example | sed 's/^tomcat//' )" >> $GITHUB_OUTPUT
     outputs:
       dhis2: ${{ steps.dhis2.outputs.version }}
       tomcat: ${{ steps.tomcat.outputs.version }}
 
   github_tags:
     name: Query versions of projects using the GitHub API
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Query latest gosu tag
         id: gosu
         run: |
           set -x
-          echo "::set-output name=version::$( curl -fsS https://api.github.com/repos/tianon/gosu/tags | jq --raw-output '.[].name' | sort --version-sort | tail -1 )"
+          echo "version=$( curl -fsS https://api.github.com/repos/tianon/gosu/tags | jq --raw-output '.[].name' | sort --version-sort | tail -1 )" >> $GITHUB_OUTPUT
       - name: Query latest remco tag
         id: remco
         run: |
           set -x
-          echo "::set-output name=version::$( curl -fsS https://api.github.com/repos/HeavyHorst/remco/tags | jq --raw-output '.[].name' | sed -r 's/^[v.]{1,2}//g' | sort --version-sort | tail -1 )"
-      - name: Query latest wait tag
-        id: wait
-        run: |
-          set -x
-          echo "::set-output name=version::$( curl -fsS https://api.github.com/repos/ufoscout/docker-compose-wait/tags | jq --raw-output '.[].name' | sort --version-sort | tail -1 )"
+          echo "version=$( curl -fsS https://api.github.com/repos/HeavyHorst/remco/tags | jq --raw-output '.[].name' | sed -r 's/^[v.]{1,2}//g' | sort --version-sort | tail -1 )" >> $GITHUB_OUTPUT
     outputs:
       gosu: ${{ steps.gosu.outputs.version }}
       remco: ${{ steps.remco.outputs.version }}
-      wait: ${{ steps.wait.outputs.version }}
 
   image_latest:
     name: Query versions in the latest ghcr.io/baosystems/dhis2 image
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     container: ghcr.io/baosystems/dhis2:latest
     steps:
       - name: Query version of DHIS2
         id: dhis2
         run: |
           set -x
-          echo "::set-output name=version::$( awk -F'=' '/^build\.version/ {gsub(/ /, "", $NF); print $NF}' /opt/dhis2/build.properties )"
+          echo "version=$( awk -F'=' '/^build\.version/ {gsub(/ /, "", $NF); print $NF}' /build.properties )" >> $GITHUB_OUTPUT
       - name: Query version of Tomcat
         id: tomcat
         run: |
           set -x
-          echo "::set-output name=version::$TOMCAT_VERSION"
+          echo "version=$TOMCAT_VERSION" >> $GITHUB_OUTPUT
     outputs:
       dhis2: ${{ steps.dhis2.outputs.version }}
       tomcat: ${{ steps.tomcat.outputs.version }}
@@ -120,21 +108,22 @@ jobs:
     name: Notify of dependencies that need to be updated
 
     if: |
-      needs.file_dockerfile.outputs.gosu != needs.github_tags.outputs.gosu
-      || needs.file_dockerfile.outputs.remco != needs.github_tags.outputs.remco
-      || needs.file_dockerfile.outputs.wait != needs.github_tags.outputs.wait
+      github.ref == 'refs/heads/main'
+      && github.event_name != 'pull_request'
+      && (needs.file_dockerfile.outputs.gosu != needs.github_tags.outputs.gosu
+          || needs.file_dockerfile.outputs.remco != needs.github_tags.outputs.remco)
 
     needs:
       - file_dockerfile
       - github_tags
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
 
       - name: Send message to Slack about gosu version in Dockerfile
         if: ${{ needs.file_dockerfile.outputs.gosu != needs.github_tags.outputs.gosu }}
-        uses: slackapi/slack-github-action@410ae57cff5c6b682b106440be0e6c7eb8c98c9d
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
@@ -142,37 +131,31 @@ jobs:
 
       - name: Send message to Slack about remco version in Dockerfile
         if: ${{ needs.file_dockerfile.outputs.remco != needs.github_tags.outputs.remco }}
-        uses: slackapi/slack-github-action@410ae57cff5c6b682b106440be0e6c7eb8c98c9d
+        uses: slackapi/slack-github-action@e28cf165c92ffef168d23c5c9000cffc8a25e117
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         with:
           payload: "{\"level\": \":warning: WARNING\", \"message\": \"remco version in Dockerfile (${{ needs.file_dockerfile.outputs.remco }}) does not match the latest tag in github.com/HeavyHorst/remco (${{ needs.github_tags.outputs.remco }})\"}"
 
-      - name: Send message to Slack about wait version in Dockerfile
-        if: ${{ needs.file_dockerfile.outputs.wait != needs.github_tags.outputs.wait }}
-        uses: slackapi/slack-github-action@410ae57cff5c6b682b106440be0e6c7eb8c98c9d
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        with:
-          payload: "{\"level\": \":warning: WARNING\", \"message\": \"wait version in Dockerfile (${{ needs.file_dockerfile.outputs.wait }}) does not match the latest tag in github.com/ufoscout/docker-compose-wait (${{ needs.github_tags.outputs.wait }})\"}"
-
   envexample:
     name: Update versions in .env.example and create auto-merging pull request
 
     if: |
-      needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2
-      || needs.file_envexample.outputs.tomcat != needs.image_latest.outputs.tomcat
+      github.ref == 'refs/heads/main'
+      && github.event_name != 'pull_request'
+      && (needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2
+          || needs.file_envexample.outputs.tomcat != needs.image_latest.outputs.tomcat)
 
     needs:
       - file_envexample
       - image_latest
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
 
       - name: Checkout this repository
-        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
 
       - name: Update version of DHIS2
         if: ${{ needs.file_envexample.outputs.dhis2 != needs.image_latest.outputs.dhis2 }}
@@ -212,7 +195,7 @@ jobs:
 
       - name: Create Pull Request
         id: cpr
-        uses: peter-evans/create-pull-request@923ad837f191474af6b1721408744feb989a4c27
+        uses: peter-evans/create-pull-request@153407881ec5c347639a548ade7d8ad1d6740e38
         with:
           # GITHUB_TOKEN does not have "repo" permissions (https://docs.github.com/en/actions/security-guides/automatic-token-authentication)
           # Personal Access Token with "repo" is necessary to create commits
@@ -229,15 +212,13 @@ jobs:
 
       - name: Enable Pull Request Automerge
         if: steps.cpr.outputs.pull-request-operation == 'created'
-        uses: peter-evans/enable-pull-request-automerge@a5005d88fea9f74f18a9e0d00271285e4a58f484
-        with:
-          token: ${{ secrets.PAT }}
-          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
-          merge-method: rebase
+        run: gh pr merge --rebase --auto "${{ steps.cpr.outputs.pull-request-number }}"
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
 
       - name: Auto-approve Pull Request
         if: steps.cpr.outputs.pull-request-operation == 'created'
-        uses: juliangruber/approve-pull-request-action@2e3a01bea165781841c2ebaf0a8b3202557383e2
+        uses: juliangruber/approve-pull-request-action@dcc4effb325c0b503408619918d56e40653dcc91
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           number: ${{ steps.cpr.outputs.pull-request-number }}
@@ -255,13 +236,13 @@ jobs:
       - notify
       - envexample
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
 
       # See https://github.com/re-actors/alls-green/blob/3a2de129/README.md for why this is here
       - name: Decide whether the needed jobs succeeded or failed
-        uses: re-actors/alls-green@3a2de129f0713010a71314c74e33c0e3ef90e696
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe
         with:
           allowed-skips: notify, envexample
           jobs: ${{ toJSON(needs) }}

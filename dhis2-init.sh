@@ -39,26 +39,6 @@ done
 
 if [[ -d /dhis2-init.progress/ ]]; then
 
-  STATUS_FILE="/dhis2-init.progress/${SELF%.sh}_status.txt"
-
-  # Ensure status file parent directory exists
-  if [[ ! -d "$( dirname "$STATUS_FILE" )" ]]; then
-    mkdir -p "$( dirname "$STATUS_FILE" )"
-  fi
-
-  if [[ "${DHIS2_INIT_FORCE:-0}" == "1" ]]; then
-    echo "[DEBUG] $SELF: DHIS2_INIT_FORCE=1; delete \"$STATUS_FILE\"..." >&2
-    rm -v -f "$STATUS_FILE"
-  fi
-
-fi
-
-
-################################################################################
-
-
-if [[ -d /dhis2-init.progress/ ]]; then
-
   LOCK_FILE="/dhis2-init.progress/${SELF%.sh}.lock"
 
   # Random sleep from 0.01 to 5 seconds to prevent possible race condition with acquiring the file lock
@@ -87,27 +67,18 @@ fi
 ################################################################################
 
 
-if [[ -x /usr/local/bin/wait ]]; then
+if [[ -d /dhis2-init.progress/ ]]; then
 
-  # Ensure there are no trailing commas for WAIT_HOSTS or WAIT_PATHS if provided
-  if [ -n "${WAIT_HOSTS:-}" ]; then
-    export WAIT_HOSTS="${WAIT_HOSTS%,}"
+  STATUS_FILE="/dhis2-init.progress/${SELF%.sh}_status.txt"
+
+  # Ensure status file parent directory exists
+  if [[ ! -d "$( dirname "$STATUS_FILE" )" ]]; then
+    mkdir -p "$( dirname "$STATUS_FILE" )"
   fi
-  if [ -n "${WAIT_PATHS:-}" ]; then
-    export WAIT_PATHS="${WAIT_PATHS%,}"
-  fi
 
-  if [ -n "${WAIT_HOSTS:-}" ] || [ -n "${WAIT_PATHS:-}" ]; then
-    # Wait for hosts specified in the environment variable WAIT_HOSTS (noop if not set).
-
-    # Pause for 10 seconds to allow time for PostgreSQL to initialize itself
-    export WAIT_BEFORE='10'
-
-    # If it times out before the targets are available, it will exit with a non-0 code,
-    # and this script will quit because of the bash option "set -e" above.
-    # https://github.com/ufoscout/docker-compose-wait
-
-    /usr/local/bin/wait 2> >( sed -r -e 's/^\[(DEBUG|INFO)\s+(wait)\]/[\1] \2:/g' >&2 )
+  if [[ "${DHIS2_INIT_FORCE:-0}" == "1" ]]; then
+    echo "[DEBUG] $SELF: DHIS2_INIT_FORCE=1; delete \"$STATUS_FILE\"..." >&2
+    rm -v -f "$STATUS_FILE"
   fi
 
 fi
@@ -116,33 +87,22 @@ fi
 ################################################################################
 
 
-# If DHIS2_DATABASE_PASSWORD is empty or null, set it to the contents of DHIS2_DATABASE_PASSWORD_FILE
-if [[ -z "${DHIS2_DATABASE_PASSWORD:-}" ]] && [[ -r "${DHIS2_DATABASE_PASSWORD_FILE:-}" ]]; then
-  export DHIS2_DATABASE_PASSWORD="$(<"${DHIS2_DATABASE_PASSWORD_FILE}")"
-fi
-
 # If PGPASSWORD is empty or null, set it to the contents of PGPASSWORD_FILE
 if [[ -z "${PGPASSWORD:-}" ]] && [[ -r "${PGPASSWORD_FILE:-}" ]]; then
   export PGPASSWORD="$(<"${PGPASSWORD_FILE}")"
 fi
 
-# If PGHOST is empty or null, set it to DHIS2_DATABASE_HOST if provided
+# If PGHOST is empty or null, set it to DHIS2_DATABASE_HOST
 if [[ -z "${PGHOST:-}" ]] && [[ -n "${DHIS2_DATABASE_HOST:-}" ]]; then
   export PGHOST="${DHIS2_DATABASE_HOST:-}"
 fi
 
-# If PGPORT is empty or null, set it to DHIS2_DATABASE_PORT if provided
+# If PGPORT is empty or null, set it to DHIS2_DATABASE_PORT
 if [[ -z "${PGPORT:-}" ]] && [[ -n "${DHIS2_DATABASE_PORT:-}" ]]; then
   export PGPORT="${DHIS2_DATABASE_PORT:-}"
 fi
 
 # Set default values if not provided in the environment
-if [[ -z "${DHIS2_DATABASE_USERNAME:-}" ]]; then
-  export DHIS2_DATABASE_USERNAME='dhis'
-fi
-if [[ -z "${DHIS2_DATABASE_NAME:-}" ]]; then
-  export DHIS2_DATABASE_NAME='dhis2'
-fi
 if [[ -z "${PGUSER:-}" ]]; then
   export PGUSER='postgres'
 fi
