@@ -1,0 +1,145 @@
+---
+
+volumes:
+  dhis2_files:
+  dhis2_init_progress:
+  pass_pg_dhis:
+  pass_pg_postgres:
+  pg_data:
+
+services:
+
+  pass_init:
+    image: busybox
+    volumes:
+      - type: volume
+        source: pass_pg_dhis
+        target: /pass_pg_dhis
+      - type: volume
+        source: pass_pg_postgres
+        target: /pass_pg_postgres
+    command: >
+      sh -c "
+      if [[ ! -f /pass_pg_dhis/pass_pg_dhis.txt ]] ; then
+        echo '[INFO]: Generating random string for /pass_pg_dhis/pass_pg_dhis.txt'
+        tr -d '-' < /proc/sys/kernel/random/uuid | base64 | head -c 32 > /pass_pg_dhis/pass_pg_dhis.txt
+      fi ;
+      if [[ ! -f /pass_pg_postgres/pass_pg_postgres.txt ]] ; then
+        echo '[INFO]: Generating random string for /pass_pg_postgres/pass_pg_postgres.txt'
+        tr -d '-' < /proc/sys/kernel/random/uuid | base64 | head -c 32 > /pass_pg_postgres/pass_pg_postgres.txt
+      fi
+      "
+
+  # database:
+  #   image: ghcr.io/baosystems/postgis:${POSTGIS_TAG:-14}
+  #   depends_on:
+  #     pass_init:
+  #       condition: service_completed_successfully
+  #   restart: unless-stopped
+  #   volumes:
+  #     - type: volume
+  #       source: pass_pg_postgres
+  #       target: /pass_pg_postgres
+  #       read_only: true
+  #     - type: volume
+  #       source: pg_data
+  #       target: /var/lib/postgresql/data
+  #       volume:
+  #         nocopy: true
+  #   ports:
+  #     - 5433:5432
+  #   environment:
+  #     POSTGRES_PASSWORD_FILE: /pass_pg_postgres/pass_pg_postgres.txt
+  #   shm_size: 256mb  # https://github.com/docker-library/postgres/issues/416
+  #   command: >  # Options "synchronous_commit" through "max_locks_per_transaction" are some of the DHIS2 recommendations (https://docs.dhis2.org/en/manage/performing-system-administration/dhis-core-version-236/installation.html#install_postgresql_installation)
+  #     postgres
+  #       -c "listen_addresses=*"
+  #       -c "synchronous_commit=off"
+  #       -c "checkpoint_completion_target=0.8"
+  #       -c "wal_writer_delay=10000ms"
+  #       -c "random_page_cost=1.1"
+  #       -c "max_locks_per_transaction=96"
+  #   healthcheck:
+  #     test: ["CMD", "pg_isready", "-Upostgres"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 2s
+
+  dhis2_init:
+    image: ghcr.io/baosystems/dhis2:${DHIS2_TAG:-latest}
+    # depends_on:
+    #   database:
+    #     condition: service_healthy
+    volumes:
+      - type: volume
+        source: dhis2_init_progress
+        target: /dhis2-init.progress
+      - type: volume
+        source: dhis2_files
+        target: /opt/dhis2/files
+        volume:
+          nocopy: true
+      - type: volume
+        source: pass_pg_dhis
+        target: /pass_pg_dhis
+        read_only: true
+      - type: volume
+        source: pass_pg_postgres
+        target: /pass_pg_postgres
+        read_only: true
+    env_file:
+      - ./config/init.env
+    command:
+      - dhis2-init.sh  # Override the image default
+
+  dhis2:
+    image: ghcr.io/baosystems/dhis2:${DHIS2_TAG:-latest}
+    depends_on:
+      # database:
+      #   condition: service_healthy
+      dhis2_init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    volumes:
+      - type: volume
+        source: dhis2_files
+        target: /opt/dhis2/files
+      - type: volume
+        source: pass_pg_dhis
+        target: /pass_pg_dhis
+        read_only: true
+    env_file:
+      - ./config/dhis2.env
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/dhis-web-commons/security/login.action"]
+      interval: 1m30s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+  reverse_proxy:
+    image: caddy:${CADDY_TAG:-latest}
+    depends_on:
+      dhis2:
+        condition: service_started
+    restart: unless-stopped
+    command:
+      - "caddy"
+      - "reverse-proxy"
+      - "--from=:8080"
+      - "--to=dhis2:8080"
+    ports:
+      - target: 8080
+        published: 8081  # Accessible on port 8080 on the host machine
+        protocol: tcp
+
+  web:
+    image: "nginx:1.25.3-alpine"
+    depends_on:
+      - dhis2
+    volumes:
+      - ./extras/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx:/etc/nginx/conf.d
+    ports:
+      - "80:80"

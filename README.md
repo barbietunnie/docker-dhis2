@@ -345,9 +345,9 @@ for available versions of DHIS2.
 ### Start
 
 ```bash
-docker compose pull
+docker compose -f docker-compose-ext-db.yml pull
 
-docker compose up --detach
+docker compose -f docker-compose-ext-db.yml up  -d
 ```
 
 You can access the site through http://localhost:8080/
